@@ -40,14 +40,25 @@ func LogReader(log_file string, log_channel chan log_event) {
 	}
 }
 
+func CreateGroupAndStream(sess *session.Session, stream string, group string) error {
+	svc := cloudwatchlogs.New(sess)
+	resp, err := svc.CreateLogStream(&cloudwatchlogs.CreateLogStreamInput{
+		LogGroupName:  &group,
+		LogStreamName: &stream,
+	})
+	if err != nil {
+		fmt.Println(resp)
+	}
+	return err
+}
+
 func LogSender(log_channel chan log_event) {
 	var (
-		nextSeqToken string
-		credential   *credentials.Credentials
-		logEvents    []*cloudwatchlogs.InputLogEvent
+		credential *credentials.Credentials
+		logEvents  []*cloudwatchlogs.InputLogEvent
 	)
 
-	logGroupName := "test"
+	logGroupName := "test3"
 	logStreamName := "alexs-mbp"
 
 	aws_config := aws.Config{
@@ -58,46 +69,56 @@ func LogSender(log_channel chan log_event) {
 	svc := cloudwatchlogs.New(sess)
 	checkTime := time.Now().Unix()
 
+	var nextSeqToken string
 	for {
 		select {
 		case elm, status := <-log_channel:
 			if status {
 				//send every 100 log events, or every 5 seconds
-				if len(logEvents) < 10 || time.Now().Unix()-checkTime > 2 {
+				if len(logEvents) < 100 || time.Now().Unix()-checkTime > 2 {
 					logEvents = append(logEvents, &cloudwatchlogs.InputLogEvent{
 						Timestamp: aws.Int64(elm.timestamp), Message: &elm.message})
 				} else {
-					if nextSeqToken == "" {
-						eventInput := cloudwatchlogs.PutLogEventsInput{
-							LogGroupName:  &logGroupName,
-							LogStreamName: &logStreamName,
-							LogEvents:     logEvents,
-						}
-						resp, err := svc.PutLogEvents(&eventInput)
-						if err != nil {
-							fmt.Println(err)
-							errorString := strings.Split(string(err.Error()), " ")
+					eventInput := cloudwatchlogs.PutLogEventsInput{
+						LogGroupName:  &logGroupName,
+						LogStreamName: &logStreamName,
+						LogEvents:     logEvents,
+					}
+					if nextSeqToken != "" {
+						eventInput.SequenceToken = &nextSeqToken
+					}
+					resp, err := svc.PutLogEvents(&eventInput)
+					for err != nil {
+						fmt.Println(err)
+						errorString := strings.Split(string(err.Error()), " ")
+						issue := strings.TrimSpace(errorString[4])
+						switch {
+						// needs rewrite incase amazon changes their errors.
+						// needs to be something like: 'if "group" in errorString:'
+						case issue == "stream":
+							_, _ = svc.CreateLogStream(&cloudwatchlogs.CreateLogStreamInput{
+								LogGroupName:  &logGroupName,
+								LogStreamName: &logStreamName,
+							})
+						case issue == "group":
+							_, _ = svc.CreateLogGroup(&cloudwatchlogs.CreateLogGroupInput{
+								LogGroupName: &logGroupName})
+						case strings.TrimSpace(errorString[0]) == "InvalidSequenceTokenException:":
 							nextSeqToken = strings.Split(errorString[len(errorString)-6], "\n")[0]
-							fmt.Println(nextSeqToken)
-							fmt.Println("DONE")
 						}
-						if resp == nil {
-						}
-					} else {
-						eventInput := cloudwatchlogs.PutLogEventsInput{
+						eventInput = cloudwatchlogs.PutLogEventsInput{
 							LogGroupName:  &logGroupName,
 							LogStreamName: &logStreamName,
 							LogEvents:     logEvents,
-							SequenceToken: &nextSeqToken,
 						}
-						fmt.Println(eventInput)
-						resp, err := svc.PutLogEvents(&eventInput)
-						nextSeqToken = *resp.NextSequenceToken
-						fmt.Println("Success", resp)
-						if err != nil {
-							fmt.Println(err)
-							fmt.Println(resp.GoString())
+						if nextSeqToken != "" {
+							eventInput.SequenceToken = &nextSeqToken
 						}
+						resp, err = svc.PutLogEvents(&eventInput)
+					}
+					nextSeqToken = *resp.NextSequenceToken
+					if resp != nil {
+						fmt.Println(resp.GoString())
 					}
 					checkTime = time.Now().Unix()
 					logEvents = logEvents[:0]
