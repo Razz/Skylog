@@ -40,18 +40,6 @@ func LogReader(log_file string, log_channel chan log_event) {
 	}
 }
 
-func CreateGroupAndStream(sess *session.Session, stream string, group string) error {
-	svc := cloudwatchlogs.New(sess)
-	resp, err := svc.CreateLogStream(&cloudwatchlogs.CreateLogStreamInput{
-		LogGroupName:  &group,
-		LogStreamName: &stream,
-	})
-	if err != nil {
-		fmt.Println(resp)
-	}
-	return err
-}
-
 func LogSender(log_channel chan log_event) {
 	var (
 		credential   *credentials.Credentials
