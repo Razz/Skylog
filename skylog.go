@@ -54,8 +54,9 @@ func CreateGroupAndStream(sess *session.Session, stream string, group string) er
 
 func LogSender(log_channel chan log_event) {
 	var (
-		credential *credentials.Credentials
-		logEvents  []*cloudwatchlogs.InputLogEvent
+		credential   *credentials.Credentials
+		logEvents    []*cloudwatchlogs.InputLogEvent
+		nextSeqToken string
 	)
 
 	logGroupName := "test3"
@@ -69,7 +70,6 @@ func LogSender(log_channel chan log_event) {
 	svc := cloudwatchlogs.New(sess)
 	checkTime := time.Now().Unix()
 
-	var nextSeqToken string
 	for {
 		select {
 		case elm, status := <-log_channel:
@@ -131,11 +131,9 @@ func LogSender(log_channel chan log_event) {
 }
 
 func main() {
-
 	runtime.GOMAXPROCS(2)
 	var wg sync.WaitGroup
 	wg.Add(2)
-
 	file_channel := make(chan log_event, 1000000)
 	go LogReader("/var/log/system.log", file_channel)
 	go LogSender(file_channel)
