@@ -29,7 +29,7 @@ func LogReader(log_file string, log_channel chan log_event) {
 	for {
 		line, _, err := file_reader.ReadLine()
 		if err == io.EOF {
-			time.Sleep(10)
+			time.Sleep(time.Second * 2)
 		} else {
 			log_channel <- log_event{
 				location:  log_file,
@@ -63,7 +63,7 @@ func LogSender(log_channel chan log_event) {
 		case elm, status := <-log_channel:
 			if status {
 				//send every 100 log events, or every 5 seconds
-				if len(logEvents) < 100 || time.Now().Unix()-checkTime < 2 {
+				if len(logEvents) < 10 || time.Now().Unix()-checkTime > 2 {
 					logEvents = append(logEvents, &cloudwatchlogs.InputLogEvent{
 						Timestamp: aws.Int64(elm.timestamp), Message: &elm.message})
 				} else {
@@ -104,7 +104,7 @@ func LogSender(log_channel chan log_event) {
 				}
 			}
 		default:
-			time.Sleep(10)
+			time.Sleep(time.Second * 2)
 		}
 	}
 }
