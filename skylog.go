@@ -7,10 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
-	//	"github.com/vaughan0/go-ini"
-	//	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v2"
-	//"encoding/json"
 	"io"
 	"io/ioutil"
 	"os"
@@ -30,10 +27,6 @@ type Config struct {
 	Path   string
 	Group  string
 	Stream string
-}
-
-type Configs struct {
-	Config []Config
 }
 
 func LogReader(logPath string, logChannel chan LogEvent) {
@@ -128,11 +121,6 @@ func LogSender(logGroupName string, logStreamName string, logChannel chan LogEve
 		}
 	}
 }
-func printTest(items []string) {
-	for _, i := range items {
-		fmt.Println(i)
-	}
-}
 
 func main() {
 	runtime.GOMAXPROCS(2)
@@ -148,7 +136,6 @@ func main() {
 		wg.Add(2)
 		go LogReader(v.Path, fileChannel)
 		go LogSender(v.Group, v.Stream, fileChannel)
-		printTest([]string{v.Path, v.Group, v.Stream})
 	}
 	wg.Wait()
 }
