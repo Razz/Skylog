@@ -7,9 +7,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
+	//	"github.com/vaughan0/go-ini"
+	//	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v2"
+	//"encoding/json"
 	"io"
-
-	//"io/ioutil"
+	"io/ioutil"
 	"os"
 	"runtime"
 	"strings"
@@ -17,22 +20,33 @@ import (
 	"time"
 )
 
-type log_event struct {
+type LogEvent struct {
 	location  string
 	message   string
 	timestamp int64
 }
 
-func LogReader(log_file string, log_channel chan log_event) {
-	file, _ := os.Open(log_file)
+type Config struct {
+	Path   string
+	Group  string
+	Stream string
+}
+
+type Configs struct {
+	Config []Config
+}
+
+func LogReader(logPath string, logChannel chan LogEvent) {
+	fmt.Println(logPath)
+	file, _ := os.Open(logPath)
 	file_reader := bufio.NewReader(file)
 	for {
 		line, _, err := file_reader.ReadLine()
 		if err == io.EOF {
 			time.Sleep(time.Second * 2)
 		} else {
-			log_channel <- log_event{
-				location:  log_file,
+			logChannel <- LogEvent{
+				location:  logPath,
 				message:   string(line),
 				timestamp: time.Now().UnixNano() / (int64(time.Millisecond) / int64(time.Nanosecond)),
 			}
@@ -40,15 +54,12 @@ func LogReader(log_file string, log_channel chan log_event) {
 	}
 }
 
-func LogSender(log_channel chan log_event) {
+func LogSender(logGroupName string, logStreamName string, logChannel chan LogEvent) {
 	var (
 		credential   *credentials.Credentials
 		logEvents    []*cloudwatchlogs.InputLogEvent
 		nextSeqToken string
 	)
-
-	logGroupName := "test3"
-	logStreamName := "alexs-mbp"
 
 	aws_config := aws.Config{
 		Region:      aws.String("us-east-1"),
@@ -60,13 +71,10 @@ func LogSender(log_channel chan log_event) {
 
 	for {
 		select {
-		case elm, status := <-log_channel:
+		case elm, status := <-logChannel:
 			if status {
-				//send every 100 log events, or every 5 seconds
-				if len(logEvents) < 100 || time.Now().Unix()-checkTime > 2 {
-					logEvents = append(logEvents, &cloudwatchlogs.InputLogEvent{
-						Timestamp: aws.Int64(elm.timestamp), Message: &elm.message})
-				} else {
+				//send every 100 log events, or every 2 seconds
+				if len(logEvents) >= 100 || time.Now().Unix()-checkTime > 2 {
 					eventInput := cloudwatchlogs.PutLogEventsInput{
 						LogGroupName:  &logGroupName,
 						LogStreamName: &logStreamName,
@@ -110,6 +118,9 @@ func LogSender(log_channel chan log_event) {
 					}
 					checkTime = time.Now().Unix()
 					logEvents = logEvents[:0]
+				} else {
+					logEvents = append(logEvents, &cloudwatchlogs.InputLogEvent{
+						Timestamp: aws.Int64(elm.timestamp), Message: &elm.message})
 				}
 			}
 		default:
@@ -117,13 +128,27 @@ func LogSender(log_channel chan log_event) {
 		}
 	}
 }
+func printTest(items []string) {
+	for _, i := range items {
+		fmt.Println(i)
+	}
+}
 
 func main() {
 	runtime.GOMAXPROCS(2)
 	var wg sync.WaitGroup
-	wg.Add(2)
-	file_channel := make(chan log_event, 1000000)
-	go LogReader("/var/log/system.log", file_channel)
-	go LogSender(file_channel)
+	var config map[string]Config
+	configFile, _ := ioutil.ReadFile("/Users/acornford/skylog/test.conf")
+	if err := yaml.Unmarshal(configFile, &config); err != nil {
+		fmt.Println(err)
+	}
+
+	for _, v := range config {
+		fileChannel := make(chan LogEvent, 1000)
+		wg.Add(2)
+		go LogReader(v.Path, fileChannel)
+		go LogSender(v.Group, v.Stream, fileChannel)
+		printTest([]string{v.Path, v.Group, v.Stream})
+	}
 	wg.Wait()
 }
