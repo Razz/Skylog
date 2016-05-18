@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -41,7 +40,7 @@ func LogReader(logPath string,
 	for {
 		line, _, err := fileReader.ReadLine()
 		if err == io.EOF {
-			time.Sleep(time.Second * 2)
+			time.Sleep(time.Second)
 		} else {
 			logChannel <- LogEvent{
 				location:  logPath,
@@ -55,19 +54,14 @@ func LogReader(logPath string,
 func LogSender(logGroupName string,
 	logStreamName string,
 	logChannel chan LogEvent,
-	logger *log.Logger) {
+	logger *log.Logger,
+	awsConfig aws.Config) {
 
 	var (
-		credential   *credentials.Credentials
 		logEvents    []*cloudwatchlogs.InputLogEvent
 		nextSeqToken string
 	)
-
-	aws_config := aws.Config{
-		Region:      aws.String("us-east-1"),
-		Credentials: credential}
-
-	sess := session.New(&aws_config)
+	sess := session.New(&awsConfig)
 	svc := cloudwatchlogs.New(sess)
 	checkTime := time.Now().Unix()
 
@@ -87,7 +81,7 @@ func LogSender(logGroupName string,
 					}
 					resp, err := svc.PutLogEvents(&eventInput)
 					for err != nil {
-						fmt.Println(err)
+						logger.Println(err)
 						errorString := strings.Split(string(err.Error()), " ")
 						issue := strings.TrimSpace(errorString[4])
 						switch {
@@ -123,7 +117,7 @@ func LogSender(logGroupName string,
 				}
 			}
 		default:
-			time.Sleep(time.Second * 2)
+			time.Sleep(time.Second)
 		}
 	}
 }
@@ -133,7 +127,16 @@ func main() {
 		wg            sync.WaitGroup
 		config        map[string]Config
 		skylogLogFile *os.File
+		credential    *credentials.Credentials
 	)
+
+	// Add reading from a config file for keys
+	// if they dont exist, try env
+	// if those dont exist bail out
+
+	awsConfig := aws.Config{
+		Region:      aws.String("us-east-1"),
+		Credentials: credential}
 
 	if _, err := os.Stat("/var/log/skylog.log"); os.IsNotExist(err) {
 		skylogLogFile, _ = os.Create("/var/log/skylog.log")
@@ -143,7 +146,7 @@ func main() {
 	logger := log.New(skylogLogFile, "Log:", 0)
 
 	runtime.GOMAXPROCS(2)
-	configFile, _ := ioutil.ReadFile("/Users/acornford/skylog/test.conf")
+	configFile, _ := ioutil.ReadFile("/etc/skylog/skylog.conf")
 	if err := yaml.Unmarshal(configFile, &config); err != nil {
 		logger.Println(err)
 	}
@@ -155,9 +158,10 @@ func main() {
 		} else {
 			wg.Add(2)
 			go LogReader(v.Path, logger, fileChannel)
-			go LogSender(v.Group, v.Stream, fileChannel, logger)
-			fmt.Println(v.Path)
+			go LogSender(v.Group, v.Stream, fileChannel, logger, awsConfig)
 		}
 	}
 	wg.Wait()
+	//porbably should add saftey by defering file closes. I dont know if it's
+	// needed.
 }
