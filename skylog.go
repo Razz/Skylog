@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v2"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"runtime"
 	"strings"
@@ -29,12 +30,16 @@ type Config struct {
 	Stream string
 }
 
-func LogReader(logPath string, logChannel chan LogEvent) {
-	fmt.Println(logPath)
-	file, _ := os.Open(logPath)
-	file_reader := bufio.NewReader(file)
+func LogReader(logPath string,
+	logger *log.Logger,
+	logChannel chan LogEvent) {
+	fileToRead, fileError := os.Open(logPath)
+	if fileError != nil {
+		logger.Panicln(fileError)
+	}
+	fileReader := bufio.NewReader(fileToRead)
 	for {
-		line, _, err := file_reader.ReadLine()
+		line, _, err := fileReader.ReadLine()
 		if err == io.EOF {
 			time.Sleep(time.Second * 2)
 		} else {
@@ -47,7 +52,11 @@ func LogReader(logPath string, logChannel chan LogEvent) {
 	}
 }
 
-func LogSender(logGroupName string, logStreamName string, logChannel chan LogEvent) {
+func LogSender(logGroupName string,
+	logStreamName string,
+	logChannel chan LogEvent,
+	logger *log.Logger) {
+
 	var (
 		credential   *credentials.Credentials
 		logEvents    []*cloudwatchlogs.InputLogEvent
@@ -67,7 +76,7 @@ func LogSender(logGroupName string, logStreamName string, logChannel chan LogEve
 		case elm, status := <-logChannel:
 			if status {
 				//send every 100 log events, or every 2 seconds
-				if len(logEvents) >= 100 || time.Now().Unix()-checkTime > 2 {
+				if len(logEvents) >= 100 || time.Now().Unix()-checkTime > 2 && len(logEvents) > 1 {
 					eventInput := cloudwatchlogs.PutLogEventsInput{
 						LogGroupName:  &logGroupName,
 						LogStreamName: &logStreamName,
@@ -106,9 +115,6 @@ func LogSender(logGroupName string, logStreamName string, logChannel chan LogEve
 						resp, err = svc.PutLogEvents(&eventInput)
 					}
 					nextSeqToken = *resp.NextSequenceToken
-					if resp != nil {
-						fmt.Println(resp.GoString())
-					}
 					checkTime = time.Now().Unix()
 					logEvents = logEvents[:0]
 				} else {
@@ -123,19 +129,35 @@ func LogSender(logGroupName string, logStreamName string, logChannel chan LogEve
 }
 
 func main() {
+	var (
+		wg            sync.WaitGroup
+		config        map[string]Config
+		skylogLogFile *os.File
+	)
+
+	if _, err := os.Stat("/var/log/skylog.log"); os.IsNotExist(err) {
+		skylogLogFile, _ = os.Create("/var/log/skylog.log")
+	} else {
+		skylogLogFile, _ = os.Open("/var/log/skylog.log")
+	}
+	logger := log.New(skylogLogFile, "Log:", 0)
+
 	runtime.GOMAXPROCS(2)
-	var wg sync.WaitGroup
-	var config map[string]Config
 	configFile, _ := ioutil.ReadFile("/Users/acornford/skylog/test.conf")
 	if err := yaml.Unmarshal(configFile, &config); err != nil {
-		fmt.Println(err)
+		logger.Println(err)
 	}
 
 	for _, v := range config {
 		fileChannel := make(chan LogEvent, 1000)
-		wg.Add(2)
-		go LogReader(v.Path, fileChannel)
-		go LogSender(v.Group, v.Stream, fileChannel)
+		if _, testFileLoc := os.Stat(v.Path); os.IsNotExist(testFileLoc) {
+			logger.Fatalln("File and path: ", v.Path, " does not exist, or can  not be opened")
+		} else {
+			wg.Add(2)
+			go LogReader(v.Path, logger, fileChannel)
+			go LogSender(v.Group, v.Stream, fileChannel, logger)
+			fmt.Println(v.Path)
+		}
 	}
 	wg.Wait()
 }
