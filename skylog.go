@@ -34,7 +34,7 @@ func LogReader(logPath string,
 	logChannel chan LogEvent) {
 	fileToRead, fileError := os.Open(logPath)
 	if fileError != nil {
-		logger.Panicln(fileError)
+		logger.Fatalln(fileError)
 	}
 	fileReader := bufio.NewReader(fileToRead)
 	for {
@@ -69,7 +69,8 @@ func LogSender(logGroupName string,
 		select {
 		case elm, status := <-logChannel:
 			if status {
-				//send every 100 log events, or every 2 seconds
+				//send every 100 log events, or every 2 seconds, if there are any events
+				// in the logEvents queue
 				if len(logEvents) >= 100 || time.Now().Unix()-checkTime > 2 && len(logEvents) > 1 {
 					eventInput := cloudwatchlogs.PutLogEventsInput{
 						LogGroupName:  &logGroupName,
